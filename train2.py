@@ -43,7 +43,7 @@ W_truemat = generate_W('random', n_hidden, n_visible, p=0.1)
 W_true = torch.tensor(W_truemat, dtype=torch.float32)
 n_hidden, n_visible = W_true.shape
 
-# Generate data from W_true
+# Generate data from W_true using classical Gibbs
 # rbm_true =  RBM(n_visible, n_hidden, n_train + n_valid + 1000, lr, n_batch, seed=123, W_init = torch.clone(W_true))
 # samples = rbm_true.samp(n_train + 1000)
 # samples_converged = samples[1001:,]
@@ -54,26 +54,27 @@ n_hidden, n_visible = W_true.shape
 # print(samples_train.shape)
 # print(samples_valid.shape)
 
+# Generate data from W_true using unbiased Gibbs 
 mx.random.seed(123)
 b = nd.zeros(shape=n_visible, ctx=ctx)
 c = nd.zeros(shape=n_hidden, ctx=ctx)
 w = nd.array(np.transpose(W_truemat),ctx=ctx)
 sampler = UnbiasedRBMSampler(w, b, c, ctx=ctx)
 v0 = nd.random.randint(0, 2, shape=n_visible, ctx=ctx).astype(w.dtype)
-samples_train = nd.zeros(shape=(n_visible, n_hidden), ctx=ctx)
+samples_train = nd.zeros(shape=(n_train, n_visible), ctx=ctx)
 for i in range(n_train):
-    samples_train.append(sampler.sample(v0, min_steps=1, max_steps=1000)[0][0,])
+    samples_train[i,]=sampler.sample(v0, min_steps=1, max_steps=1000)[0][0,]
 
 
 
 ctx = mx.cpu()
-dat = nd.array(np.array(samples_train), ctx=ctx)
+dat = nd.array(samples_train, ctx=ctx)
 
 # Train RBM using CD-k
 cd1 = RBMucd(n_visible, n_hidden, ctx=ctx)
 res_cd1 = cd1.train_cdk(dat, W_true = nd.array(np.transpose(W_truemat),ctx=ctx), 
                         batch_size=n_batch, epochs=200, lr=lr,
-                        k=1, nchain=100,
+                        k=1, nchain=1000,
                         report_freq=1, exact_loglik=False)
 
 
@@ -81,7 +82,7 @@ res_cd1 = cd1.train_cdk(dat, W_true = nd.array(np.transpose(W_truemat),ctx=ctx),
 ucd = RBMucd(n_visible, n_hidden, ctx=ctx)
 res_ucd = ucd.train_ucd(dat, W_true = nd.array(np.transpose(W_truemat),ctx=ctx), 
                         batch_size=n_batch, epochs=200, lr=lr,
-                        min_mcmc=1, max_mcmc=100, nchain=100,
+                        min_mcmc=1, max_mcmc=100, nchain=1000,
                         report_freq=1, exact_loglik=False)
 
 
@@ -116,7 +117,7 @@ fig.tight_layout()
 method= 'random'
 max_epoch = n
 
-plt.savefig("./plot/ucdRBM_W{}_h{}_v{}_lr{}_batch{}_epoch{}.png".format(method,n_hidden,n_visible,lr,n_batch,max_epoch), format="png")
+plt.savefig("./plot/new1000ucdRBM_W{}_h{}_v{}_lr{}_batch{}_epoch{}.png".format(method,n_hidden,n_visible,lr,n_batch,max_epoch), format="png")
 
 
 # fig = plt.figure()
@@ -150,12 +151,6 @@ plt.savefig("./plot/ucdRBM_W{}_h{}_v{}_lr{}_batch{}_epoch{}.png".format(method,n
 # sub.set_ylabel("# Rejected Samples per Chain")
 
 # fig.show()
-
-# Train RBM using masked RBM
-np.random.seed(123)
-rbm_train_mask = RBM(n_visible, n_hidden, k, lr*10, batchsize, seed=seed, W_init=torch.clone(W_init), masked=True)
-training_loss_mask, valid_loss_mask, dist_weights_mask, ratio_mask, err_train_mask, err_valid_mask, energy_train_mask, energy_valid_mask = rbm_train_mask.train(samples_train, samples_valid, W_true, max_epoch, show)
-
 
 
 
