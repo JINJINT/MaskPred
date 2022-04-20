@@ -1,9 +1,15 @@
 from RBM import *
 from utils import *
 from RBMbase import *
+from RBMucd import *
+import matplotlib
+import matplotlib.pyplot as plt
+import seaborn as sns   
+
+
 if not os.path.exists('./plot'):
     os.makedirs('./plot')
-
+    
 # parameters 
 n_hidden = 9
 n_visible = 25
@@ -14,6 +20,9 @@ max_epoch = 1500
 k = 10
 show = 10
 np.random.seed(888)
+
+
+
 
 for method in ['sparse']:
     for lr in [0.005]:

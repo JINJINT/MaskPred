@@ -37,16 +37,16 @@ class RBM:
             torch.nn.init.normal_(self.W, 0, np.sqrt(6.0 / (self.n_hidden + self.n_visible)))
         
 
-    def h_v(self, v):
+    def h_v(self, v, T=1):
         """
         Calculates hidden vector distribution P(h=1|v)
         v: visible vector in shape (N, n_visible)
         return P(h=1|v) in shape (N, n_hidden)
         N is the batch size
         """
-        return sigmoid(self.hbias + v @ (self.W.T))
+        return sigmoid(self.hbias + T* v @ (self.W.T))
 
-    def sample_h(self, v):
+    def sample_h(self, v, T=1):
         """
         Sample hidden vector given distribution P(h=1|v)
         v: visible vector in shape (N, n_visible)
@@ -54,17 +54,17 @@ class RBM:
         Do np.random.seed(seed) before you call any np.random.xx()
         """
         
-        return torch.tensor(np.random.binomial(1, self.h_v(v)), dtype=torch.float32), self.h_v(v)
+        return torch.tensor(np.random.binomial(1, self.h_v(v ,T=T)), dtype=torch.float32), self.h_v(v, T=T)
 
-    def v_h(self, h):
+    def v_h(self, h, T=1):
         """
         Calculates visible vector distribution P(v=1|h)
         h: hidden vector in shape (N, n_hidden)
         return P(v=1|h) in shape (N, n_visible)
         """
-        return sigmoid(self.vbias + h @ self.W)
+        return sigmoid(self.vbias + T * h @ self.W)
 
-    def sample_v(self, h):
+    def sample_v(self, h, T=1):
         """
         Sample visible vector given distribution P(h=1|v)
         h: hidden vector in shape (N, n_hidden)
@@ -72,9 +72,9 @@ class RBM:
         Do np.random.seed(seed) before you call any np.random.xx()
         """
     
-        return torch.tensor(np.random.binomial(1, self.v_h(h)), dtype=torch.float32), self.v_h(h)
+        return torch.tensor(np.random.binomial(1, self.v_h(h, T=T)), dtype=torch.float32), self.v_h(h, T=T)
 
-    def gibbs_k(self, v, k=0):
+    def gibbs_k(self, v, k=0, T=1):
         """
         The contrastive divergence k (CD-k) procedure
         v: visible vector, in (N, n_visible)
@@ -93,17 +93,86 @@ class RBM:
             np.random.seed(self.seed)
             if (k==0): k=self.k
             v0 = torch.tensor(v, dtype=torch.float32)
-            h0, prob_h = self.sample_h(v0)
+            h0, prob_h = self.sample_h(v0, T=T)
             v_samples = []
             v_samples.append(v0)
             h_sample = h0
     
             for step in range(k):
-                v_sample, prob_v = self.sample_v(h_sample)
+                v_sample, prob_v = self.sample_v(h_sample, T=T)
                 v_samples.append(v_sample)
-                h_sample, prob_h = self.sample_h(v_sample)
+                h_sample, prob_h = self.sample_h(v_sample, T=T)
         
         return v_samples
+
+
+    def AIS(self, n,Jst,k,m):
+        betalist = np.linspace(0,1,k+1)
+        zhatlist = []
+        model0 = RBM(n,0,0)
+
+        for i in range(m):
+            zhat=0
+            model0.init_state()
+            x = model._state
+            for j in range(k):
+              modelcur = (n,0,Jst*betalist[j+1])
+              xcur=gibbs(modelcur,x,1)[0]
+              zhat += Jst*sumJst(xcur,n)*(betalist[j+1]-betalist[j])
+              x = xcur
+            zhat += np.log(2)*n**2
+            zhatlist.append(zhat)
+        return np.mean(zhatlist), np.var(zhatlist)    
+
+
+    def tp(self, p):
+        T = np.linspace(0,1.0,20)
+        Zlist = []
+        for t in range(len(T)):
+            Zlist.append(AIS(n, Jst/T[t],50,50)[0])
+
+        sumlist = []
+        templist = []  
+        sumt1list = []
+        sumgibbslist = []
+
+        modelcur = Ising(n,0,0)
+        x = modelcur._state
+        t = 0
+          
+        modelgib = Ising(n,0,Jst)
+        xgib = modelcur._state
+          
+        for i in range(100000):
+            # Gibss sampling
+            xgibcur = gibbs(modelgib,xgib,1)[0]
+            sumgibbslist.append(np.sum(xgibcur))
+            xgib = xgibcur.copy()
+            
+            # Tempering sampling
+            if np.random.uniform(0,1)<=0.5:
+              if t==0:
+                tcur = 1
+              elif t == len(T)-1:
+                tcur = len(T)-2 
+              else:
+                if np.random.uniform(0,1)<=0.5:
+                  tcur = t-1  
+                else:
+                  tcur = t+1  
+              ratio = np.exp(Jst*sumJst(x,n)/T[tcur]-Zlist[tcur]-Jst*sumJst(x,n)/T[t]+Zlist[t])
+              u = np.random.uniform(0,1)
+              if u<=min(ratio,1):
+                t = tcur
+            else:
+              modelcur = Ising(n,0,Jst/T[t])
+              xcur = gibbs(modelcur,x,1)[0]
+              x = xcur.copy()
+            sumlist.append(np.sum(x))
+            templist.append(T[t])
+            
+            if T[t]==1:
+              sumt1list.append(np.sum(x))    
 
     
     def eval(self, X):
