@@ -13,22 +13,21 @@ if not os.path.exists('./plot'):
 # parameters 
 n_hidden = 9
 n_visible = 25
-n_train = 1000
-n_valid = 300
+n_train = 10000
+n_valid = 3000
 seed = 521
-max_epoch = 1500
+max_epoch = 2000
 k = 10
 show = 10
 np.random.seed(888)
 
 
 
-
-for method in ['sparse']:
-    for lr in [0.005]:
-            for batchsize in [100]:
+for method in ['sparse', 'random']:
+    for lr in [0.1, 0.01, 0.005, 0.0001, 0.0005]:
+            for batchsize in [100, 500, 1000]:
                 if method =='sparse':
-                    plist = [0.1]
+                    plist = [0.1, 0.3, 0.5]
                     #lr = 0.05
                 if method == 'random':
                     plist = [None]
@@ -38,17 +37,17 @@ for method in ['sparse']:
                 for p in plist:
                     #======generate true weights
                     W_true = generate_W(method, n_hidden, n_visible, p=p)
-                    W_true = torch.tensor(W_true, dtype=torch.float32)
+                    W_true = W_true.clone()
                     n_hidden, n_visible = W_true.shape
                     
                     # Generate initial weights
                     # warm start
                     if method=='random':    
                         W_init = W_true + torch.tensor(np.random.normal(0, np.sqrt(
-                                    6 / (n_hidden + n_visible)), (n_hidden, n_visible)), dtype=torch.float32)
+                                    0.6 / (n_hidden + n_visible)), (n_hidden, n_visible)), dtype=torch.float32)
                     if method=='sparse':
                         W_init = W_true + torch.tensor(np.random.normal(0, np.sqrt(
-                                    6 / (n_hidden + n_visible)), (n_hidden, n_visible)), dtype=torch.float32)
+                                    0.6 / (n_hidden + n_visible)), (n_hidden, n_visible)), dtype=torch.float32)
                     
                     if method == 'real':
                         W_init = W_true + torch.tensor(np.random.normal(0, np.sqrt(
@@ -56,9 +55,9 @@ for method in ['sparse']:
                                
 
                     # Generate data from W_true
-                    rbm_true =  RBM(n_visible, n_hidden, n_train + n_valid + 1000, lr, batchsize, seed=seed, W_init = torch.clone(W_true))
-                    samples = rbm_true.samp(n_train + 1000)
-                    samples_converged = samples[1001:,]
+                    rbm_true =  RBM(n_visible, n_hidden, n_train + n_valid + 5000, lr, batchsize, seed=seed, W_init = torch.clone(W_true))
+                    samples = rbm_true.samp(n_train + 5000)
+                    samples_converged = samples[5001:,]
                     shuffle_indices = np.arange(0, n_train + n_valid)
                     np.random.shuffle(shuffle_indices)
                     samples_train = samples_converged[shuffle_indices[:n_train],]
@@ -67,8 +66,9 @@ for method in ['sparse']:
                     print(samples_valid.shape)
 
                     # train baseline 
-                    rbm_train_base = RBM_base(n_visible, n_hidden, k, W_init.detach().numpy(), lr=lr, minibatch_size=batchsize, seed= seed)
-                    training_loss_base, valid_loss_base, dist_weights_base, ratio_base, err_train_base, err_valid_base, energy_train_base, energy_valid_base = rbm_train_base.train(samples_train.detach().numpy(), samples_valid.detach().numpy(), W_true.detach().numpy(), max_epoch, show)
+                    #rbm_train_base = RBM_base(n_visible, n_hidden, k, W_init.detach().numpy(), lr=lr, minibatch_size=batchsize, seed= seed)
+                    rbm_train_base = RBM(n_visible, n_hidden, k, W_init=torch.clone(W_init), sparsity = p, masked = False, lr=lr/5, minibatch_size=batchsize, seed= seed)
+                    training_loss_base, valid_loss_base, dist_weights_base, ratio_base, err_train_base, err_valid_base, energy_train_base, energy_valid_base = rbm_train_base.train(samples_train, samples_valid, W_true, max_epoch, show)
 
                     fig, ((ax1, ax2, ax8, ax3),(ax4, ax5, ax7, ax6)) = plt.subplots(nrows=2, ncols=4, figsize=(12,6))
                     ax1.plot(np.arange(len(training_loss_base)), training_loss_base, label = 'Train')
@@ -152,9 +152,9 @@ for method in ['sparse']:
                                              int(np.sqrt(n_hidden)), cnt)
                         ax.set_xticks([])
                         ax.set_yticks([])
-                        im = plt.imshow(rbm_train_base.W[i, :].reshape([5, 5]),
-                                        vmin = -max(abs(rbm_train_base.W[i, :])), 
-                                        vmax = max(abs(rbm_train_base.W[i, :])), 
+                        im = plt.imshow(rbm_train_base.W.detach().numpy()[i, :].reshape([5, 5]),
+                                        vmin = -max(abs(rbm_train_base.W.detach().numpy()[i, :])), 
+                                        vmax = max(abs(rbm_train_base.W.detach().numpy()[i, :])), 
                                         cmap='coolwarm')
 
                     fig.subplots_adjust(right=0.8)

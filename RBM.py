@@ -5,7 +5,7 @@ class RBM:
     """
     The RBM class
     """
-    def __init__(self, n_visible, n_hidden, k, lr=0.01, minibatch_size=1, seed= 10417617, W_init=None, masked = False):
+    def __init__(self, n_visible, n_hidden, k, lr=0.01, minibatch_size=1, seed= 10417617, W_init=None, masked = False, sparsity=None, lbd=0.1):
         """
         n_visible, n_hidden: dimension of visible and hidden layer
         k: number of gibbs sampling steps
@@ -24,6 +24,8 @@ class RBM:
         self.minibatch_size = minibatch_size
         self.seed = seed
         self.masked = masked
+        self.sparsity = sparsity
+        self.lbd = lbd
         
         self.vbias = torch.zeros(n_visible, requires_grad=True)
         self.hbias = torch.zeros(n_hidden, requires_grad=True)
@@ -37,16 +39,16 @@ class RBM:
             torch.nn.init.normal_(self.W, 0, np.sqrt(6.0 / (self.n_hidden + self.n_visible)))
         
 
-    def h_v(self, v, T=1):
+    def h_v(self, v):
         """
         Calculates hidden vector distribution P(h=1|v)
         v: visible vector in shape (N, n_visible)
         return P(h=1|v) in shape (N, n_hidden)
         N is the batch size
         """
-        return sigmoid(self.hbias + T* v @ (self.W.T))
+        return sigmoid(self.hbias + v @ (self.W.T))
 
-    def sample_h(self, v, T=1):
+    def sample_h(self, v):
         """
         Sample hidden vector given distribution P(h=1|v)
         v: visible vector in shape (N, n_visible)
@@ -54,17 +56,17 @@ class RBM:
         Do np.random.seed(seed) before you call any np.random.xx()
         """
         
-        return torch.tensor(np.random.binomial(1, self.h_v(v ,T=T)), dtype=torch.float32), self.h_v(v, T=T)
+        return torch.tensor(np.random.binomial(1, self.h_v(v)), dtype=torch.float32), self.h_v(v)
 
-    def v_h(self, h, T=1):
+    def v_h(self, h):
         """
         Calculates visible vector distribution P(v=1|h)
         h: hidden vector in shape (N, n_hidden)
         return P(v=1|h) in shape (N, n_visible)
         """
-        return sigmoid(self.vbias + T * h @ self.W)
+        return sigmoid(self.vbias + h @ self.W)
 
-    def sample_v(self, h, T=1):
+    def sample_v(self, h):
         """
         Sample visible vector given distribution P(h=1|v)
         h: hidden vector in shape (N, n_hidden)
@@ -72,9 +74,9 @@ class RBM:
         Do np.random.seed(seed) before you call any np.random.xx()
         """
     
-        return torch.tensor(np.random.binomial(1, self.v_h(h, T=T)), dtype=torch.float32), self.v_h(h, T=T)
+        return torch.tensor(np.random.binomial(1, self.v_h(h)), dtype=torch.float32), self.v_h(h)
 
-    def gibbs_k(self, v, k=0, T=1):
+    def gibbs_k(self, v, k=0):
         """
         The contrastive divergence k (CD-k) procedure
         v: visible vector, in (N, n_visible)
@@ -92,87 +94,19 @@ class RBM:
         with torch.no_grad():
             np.random.seed(self.seed)
             if (k==0): k=self.k
-            v0 = torch.tensor(v, dtype=torch.float32)
-            h0, prob_h = self.sample_h(v0, T=T)
+            v0 = v.clone()
+            h0, prob_h = self.sample_h(v0)
             v_samples = []
             v_samples.append(v0)
             h_sample = h0
     
             for step in range(k):
-                v_sample, prob_v = self.sample_v(h_sample, T=T)
+                v_sample, prob_v = self.sample_v(h_sample)
                 v_samples.append(v_sample)
-                h_sample, prob_h = self.sample_h(v_sample, T=T)
+                h_sample, prob_h = self.sample_h(v_sample)
         
         return v_samples
-
-
-    def AIS(self, n,Jst,k,m):
-        betalist = np.linspace(0,1,k+1)
-        zhatlist = []
-        model0 = RBM(n,0,0)
-
-        for i in range(m):
-            zhat=0
-            model0.init_state()
-            x = model._state
-            for j in range(k):
-              modelcur = (n,0,Jst*betalist[j+1])
-              xcur=gibbs(modelcur,x,1)[0]
-              zhat += Jst*sumJst(xcur,n)*(betalist[j+1]-betalist[j])
-              x = xcur
-            zhat += np.log(2)*n**2
-            zhatlist.append(zhat)
-        return np.mean(zhatlist), np.var(zhatlist)    
-
-
-    def tp(self, p):
-        T = np.linspace(0,1.0,20)
-        Zlist = []
-        for t in range(len(T)):
-            Zlist.append(AIS(n, Jst/T[t],50,50)[0])
-
-        sumlist = []
-        templist = []  
-        sumt1list = []
-        sumgibbslist = []
-
-        modelcur = Ising(n,0,0)
-        x = modelcur._state
-        t = 0
-          
-        modelgib = Ising(n,0,Jst)
-        xgib = modelcur._state
-          
-        for i in range(100000):
-            # Gibss sampling
-            xgibcur = gibbs(modelgib,xgib,1)[0]
-            sumgibbslist.append(np.sum(xgibcur))
-            xgib = xgibcur.copy()
-            
-            # Tempering sampling
-            if np.random.uniform(0,1)<=0.5:
-              if t==0:
-                tcur = 1
-              elif t == len(T)-1:
-                tcur = len(T)-2 
-              else:
-                if np.random.uniform(0,1)<=0.5:
-                  tcur = t-1  
-                else:
-                  tcur = t+1  
-              ratio = np.exp(Jst*sumJst(x,n)/T[tcur]-Zlist[tcur]-Jst*sumJst(x,n)/T[t]+Zlist[t])
-              u = np.random.uniform(0,1)
-              if u<=min(ratio,1):
-                t = tcur
-            else:
-              modelcur = Ising(n,0,Jst/T[t])
-              xcur = gibbs(modelcur,x,1)[0]
-              x = xcur.copy()
-            sumlist.append(np.sum(x))
-            templist.append(T[t])
-            
-            if T[t]==1:
-              sumt1list.append(np.sum(x))    
+ 
 
     
     def eval(self, X):
@@ -210,23 +144,29 @@ class RBM:
 
     
         if not self.masked:
+            penalty = 0
             if toupdate:
                 sample_X = torch.stack(self.gibbs_k(X,k=1))[-1,]
                 expect_pv = self.h_v(sample_X)
-                pv = self.h_v(X)
+                pv = self.h_v(X) # (N, n_hidden)
 
                 expect_v = sample_X.clone()
 
                 grad_hbias = expect_pv - pv
                 grad_vbias = expect_v - X
                 
-                grad_W = expect_pv.T @ expect_v - pv.T @ X
+                grad_W = (expect_pv.T @ expect_v - pv.T @ X)/N 
+
+                if self.sparsity is not None:
+                    grad_W =  grad_W  + self.lbd*(torch.mean(pv - self.sparsity, dim=0).reshape((1,-1)).T @ torch.sum(X, dim=0).reshape((1,n_visible)))/N
+                    penalty = penalty - torch.sum(torch.squeeze(self.sparsity * torch.log(torch.mean(pv, dim=0)) + (1-self.sparsity) * torch.log(1-torch.mean(pv, dim=0))))
                 
-                #self.hbias = self.hbias -self.lr *  torch.squeeze(grad_hbias)
-                #self.vbias =  self.vbias - self.lr * torch.squeeze(grad_vbias)
+                #self.hbias = self.hbias -self.lr *  torch.mean(torch.squeeze(grad_hbias), dim=0) - torch.mean(pv - self.sparsity, dim=0) 
+                #self.vbias =  self.vbias - self.lr * torch.mean(torch.squeeze(grad_vbias), dim=0)
                 self.W =  self.W - self.lr * grad_W
+
             
-            loss = -torch.mean(torch.sum(torch.log(torch.exp(self.hbias + X @ self.W.T)+1), axis=1)+ X @ self.vbias.T)
+            loss = torch.mean(torch.sum(torch.log(torch.exp(self.hbias + X @ self.W.T)+1), dim=1)+ X @ self.vbias.T)  + self.lbd*penalty
 
         else: 
             # masked loss    
@@ -269,7 +209,7 @@ class RBM:
                 self.vbias.grad.zero_()
                 self.hbias.grad.zero_()
 
-            return loss.detach()*N
+        return loss.detach()*N
 
 
     def train(self, X_train, X_valid, W_true, max_epoch=200, show = 10):
@@ -322,6 +262,7 @@ class RBM:
         samples = torch.stack(self.gibbs_k(v0))
         
         return samples
+
     
 
 
