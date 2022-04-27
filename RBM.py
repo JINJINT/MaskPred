@@ -5,7 +5,10 @@ class RBM:
     """
     The RBM class
     """
-    def __init__(self, n_visible, n_hidden, k, lr=0.01, minibatch_size=1, seed= 10417617, W_init=None, masked = False, sparsity=None, lbd=0.1):
+    def __init__(self, n_visible, n_hidden, k, lr=0.01, minibatch_size=1, 
+                 seed= 10417617, W_init=None, masked = False, 
+                 sparsity=None, lbd=0.1, 
+                 rand = 1):
         """
         n_visible, n_hidden: dimension of visible and hidden layer
         k: number of gibbs sampling steps
@@ -26,6 +29,7 @@ class RBM:
         self.masked = masked
         self.sparsity = sparsity
         self.lbd = lbd
+        self.rand = rand
         
         self.vbias = torch.zeros(n_visible, requires_grad=True)
         self.hbias = torch.zeros(n_hidden, requires_grad=True)
@@ -130,7 +134,7 @@ class RBM:
     
 
 
-    def update(self, X, toupdate = True):
+    def update(self, X, ep = 1, toupdate = True):
         """
         Updates RBM parameters with data X
         X: in (N, n_visible)
@@ -146,7 +150,7 @@ class RBM:
         if not self.masked:
             penalty = 0
             if toupdate:
-                sample_X = torch.stack(self.gibbs_k(X,k=1))[-1,]
+                sample_X = torch.stack(self.gibbs_k(X, k=1))[-1,]
                 expect_pv = self.h_v(sample_X)
                 pv = self.h_v(X) # (N, n_hidden)
 
@@ -158,15 +162,20 @@ class RBM:
                 grad_W = (expect_pv.T @ expect_v - pv.T @ X)/N 
 
                 if self.sparsity is not None:
-                    grad_W =  grad_W  + self.lbd*(torch.mean(pv - self.sparsity, dim=0).reshape((1,-1)).T @ torch.sum(X, dim=0).reshape((1,n_visible)))/N
-                    penalty = penalty - torch.sum(torch.squeeze(self.sparsity * torch.log(torch.mean(pv, dim=0)) + (1-self.sparsity) * torch.log(1-torch.mean(pv, dim=0))))
-                
+                    grad_W =  grad_W  #+ self.lbd*(self.W)
+
+                # if self.sparsity is not None:
+                #     grad_W =  grad_W  + self.lbd*(torch.mean(pv - self.sparsity, dim=0).reshape((1,-1)).T @ torch.sum(X, dim=0).reshape((1,n_visible)))/N
+                #     penalty = penalty - torch.sum(torch.squeeze(self.sparsity * torch.log(torch.mean(pv, dim=0)) + (1-self.sparsity) * torch.log(1-torch.mean(pv, dim=0))))
+
                 #self.hbias = self.hbias -self.lr *  torch.mean(torch.squeeze(grad_hbias), dim=0) - torch.mean(pv - self.sparsity, dim=0) 
                 #self.vbias =  self.vbias - self.lr * torch.mean(torch.squeeze(grad_vbias), dim=0)
-                self.W =  self.W - self.lr * grad_W
+                self.W =  self.W - self.lr /np.sqrt(ep) * grad_W
+                if self.sparsity is not None:
+                    thred = torch.quantile(torch.abs(torch.flatten(self.W)), q=1-2*self.sparsity)
+                    self.W = self.W * (torch.nn.functional.relu(torch.abs(self.W) - thred)>0)
 
-            
-            loss = torch.mean(torch.sum(torch.log(torch.exp(self.hbias + X @ self.W.T)+1), dim=1)+ X @ self.vbias.T)  + self.lbd*penalty
+            loss = torch.mean(torch.sum(torch.log(torch.exp(self.hbias + X @ self.W.T)+1), dim=1)+ X @ self.vbias.T)  + torch.sum(torch.abs(self.W))
 
         else: 
             # masked loss    
@@ -187,8 +196,8 @@ class RBM:
             loss.backward()
             '''
             # Matrix
-            
-            for i in range(n_visible):
+            rand_indices = sample(range(n_visible), math.ceil(n_visible * self.rand))
+            for i in rand_indices:
                 X_temp1 = torch.clone(X)
                 X_temp1[:,i] = 1
                 X_temp0 = torch.clone(X)
@@ -197,6 +206,7 @@ class RBM:
                 log_p0 = torch.sum(torch.log(torch.exp(self.hbias + X_temp0 @ self.W.T)+1), axis=1)
                 loss += torch.mean(X[:,i]*log_p1 + (1-X[:,i])*log_p0 - torch.log(torch.exp(log_p1) + torch .exp(log_p0)))
             loss = -loss / n_visible
+            loss = loss +  0.001*torch.sum(torch.abs(self.W))
             
             if toupdate:
                 loss.backward()
@@ -204,8 +214,11 @@ class RBM:
                 with torch.no_grad():
                     #self.hbias -= self.lr *  self.hbias.grad
                     #self.vbias -= self.lr * self.vbias.grad
-                    self.W -= self.lr * self.W.grad
+                    self.W -= self.lr /np.sqrt(ep) * self.W.grad
+  
                 self.W.grad.zero_()
+                
+                
                 self.vbias.grad.zero_()
                 self.hbias.grad.zero_()
 
@@ -231,7 +244,7 @@ class RBM:
             np.random.shuffle(shuffle_indices)
             for i in range(n_train//self.minibatch_size):
                 X_batch = X_train[shuffle_indices[i*self.minibatch_size:(i+1)*self.minibatch_size-1]]
-                train_loss_batch = self.update(X_batch)
+                train_loss_batch = self.update(X_batch, ep = epoch+1)
                 train_loss += train_loss_batch
             
             training_loss.append(train_loss/n_train)
