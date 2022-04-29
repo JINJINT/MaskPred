@@ -1,57 +1,69 @@
 from RBM import *
 from utils import *
-from RBMbase import *
 from RBMucd import *
 import matplotlib
 import matplotlib.pyplot as plt
 import seaborn as sns   
 
-
 if not os.path.exists('./plot'):
     os.makedirs('./plot')
+
+if not os.path.exists('./dump'):
+    os.makedirs('./dump')    
     
 # parameters 
 n_hidden = 9
 n_visible = 25
-n_train = 5000
-n_valid = 1000
-seed = 521
+n_train = 1000
+n_valid = 100
 max_epoch = 2000
 k = 10
 show = 10
-np.random.seed(888)
+plotw = False
 
-
-for method in ['sparse','random']:
-    for lr in [0.1,0.05,0.01,0.005]:
-            for batchsize in [100,500,1000]:
-                for noise in [0.1, 0.5, 1]:
-                    if method =='sparse':
-                        plist = [0.1,0.3]
-                        #lr = 0.05
-                    if method == 'random':
-                        plist = [None]
-                        #lr = 0.05
-                    if method =='real':
-                        lr = 0.01    
-                    
-                    for p in plist:
+for pattern in ['sparse']:
+    for noise in [0.5]:      
+        for p in [0.1,None]:
+            for batchsize in [100]:
                         #======generate true weights
-                        W_true = generate_W(method, n_hidden, n_visible, p=p)
-                        W_true = W_true.clone()
-                        n_hidden, n_visible = W_true.shape
-                        
+                W_true = generate_W(pattern, n_hidden, n_visible, p=0.1, seed=521)
+                n_hidden, n_visible = W_true.shape
+                
+                for method in ['CD','pseudo','randmask','UCD']:
+                    if method == 'CD':
+                        lr = noise*0.05*2
+                        max_epoch = 2000
+                    if method == 'randmask':
+                        lr = noise*0.5*2
+                        max_epoch = 2000
+                    if method == 'pseudo':
+                        lr = noise*0.5*2
+                        max_epoch = 2000
+                    if method =='UCD':
+                        lr = noise*0.1
+                        max_epoch = 200
+    
+
+                    train_loss = []
+                    val_loss = []
+                    wdiff = []
+                    wratio= []   
+                    train_energy = []
+                    val_energy = [] 
+
+                    for trial in range(10):    
+                        seed = 521 + trial
                         # Generate initial weights
                         # warm start
-                        if method=='random':    
+                        if pattern=='random':    
                             W_init = W_true + torch.tensor(np.random.normal(0, np.sqrt(
                                         noise *6 / (n_hidden + n_visible)), (n_hidden, n_visible)), dtype=torch.float32)
                         
-                        if method=='sparse':
+                        if pattern=='sparse':
                             W_init = W_true + torch.tensor(np.random.normal(0, np.sqrt(
                                         noise *6 / (n_hidden + n_visible)), (n_hidden, n_visible)), dtype=torch.float32)
                         
-                        if method == 'real':
+                        if pattern=='real':
                             W_init = W_true + torch.tensor(np.random.normal(0, np.sqrt(
                                         noise*1*min(torch.norm(W_true),6)/(n_hidden*n_visible)), (n_hidden, n_visible)), dtype=torch.float32)
                                    
@@ -64,214 +76,176 @@ for method in ['sparse','random']:
                         np.random.shuffle(shuffle_indices)
                         samples_train = samples_converged[shuffle_indices[:n_train],]
                         samples_valid = samples_converged[shuffle_indices[n_train:],]
-                        print(samples_train.shape)
-                        print(samples_valid.shape)
 
-                        # train baseline 
-                        #rbm_train_base = RBM_base(n_visible, n_hidden, k, W_init.detach().numpy(), lr=lr, minibatch_size=batchsize, seed= seed)
-                        rbm_train_base = RBM(n_visible, n_hidden, k, W_init=torch.clone(W_init), sparsity = p, masked = False, lr=lr/2, minibatch_size=batchsize, seed= seed)
-                        training_loss_base, valid_loss_base, dist_weights_base, ratio_base, err_train_base, err_valid_base, energy_train_base, energy_valid_base = rbm_train_base.train(samples_train, samples_valid, W_true, max_epoch, show)
+                        if plotw:
+                            fig = plt.figure()
+                            cnt = 0
+                            for i in range(n_hidden):
+                                cnt += 1
+                                ax = fig.add_subplot(int(np.sqrt(n_hidden)),
+                                                     int(np.sqrt(n_hidden)), cnt)
+                                ax.set_xticks([])
+                                ax.set_yticks([])
+                                im = plt.imshow(W_true.detach().numpy()[cnt-1, :].reshape((5, 5)),
+                                                vmin = -1, 
+                                                vmax = 1, cmap='coolwarm')
 
-                        fig, ((ax1, ax2, ax8, ax3),(ax4, ax5, ax7, ax6),(ax9, ax10, ax11, ax12)) = plt.subplots(nrows=3, ncols=4, figsize=(12,9))
-                        ax1.plot(np.arange(len(training_loss_base)), training_loss_base, label = 'Train')
-                        ax1.plot(np.arange(len(training_loss_base)), valid_loss_base, label = 'Validation')
-                        ax1.set_xlabel('Epoch')
-                        ax1.set_ylabel('Loss')
-                        ax1.set_title('Baseline loss')
-                        ax1.legend()
-
-                        # ax2.plot(np.arange(len(training_loss_base)), dist_weights_base)
-                        # ax2.set_xlabel('Iterations')
-                        # ax2.set_ylabel('Distance between weights')
-                        # ax2.set_title('Baseline weight diff')
-                        ax2.plot(show*np.arange(len(err_train_base)), err_train_base, label='Train')
-                        ax2.plot(show*np.arange(len(err_train_base)), err_valid_base,label='Validation')
-                        ax2.set_xlabel('Epoch')
-                        ax2.set_ylabel('Reconstruction Error')
-                        ax2.set_title('Baseline Reconstruction')
-                        ax2.legend()
-
-                        ax8.plot(show*np.arange(len(energy_train_base)), energy_train_base, label = 'Train')
-                        ax8.plot(show*np.arange(len(energy_valid_base)), energy_valid_base, label = 'Validation')
-                        ax8.set_xlabel('Epoch')
-                        ax8.set_ylabel('Free energy')
-                        ax8.set_title('Baseline energy')
-                        ax8.legend()
-
-                        ax3.plot(np.arange(len(training_loss_base)), ratio_base)
-                        ax3.set_xlabel('Epoch')
-                        ax3.set_ylabel('Ratio of weight difference')
-                        ax3.set_ylim(bottom=0)
-                        ax3.set_title('Baseline weight diff')
+                            fig.subplots_adjust(right=0.8)
+                            cbar_ax = fig.add_axes([0.85, 0.15, 0.05, 0.7])
+                            fig.colorbar(im, cax=cbar_ax)
+                            plt.savefig("./plot/true_pattern{}_h{}_v{}_lr{}_batch{}_p{}_epoch{}_noise{}_trial{}.png".format(pattern,n_hidden,n_visible,lr,batchsize,p,max_epoch,noise,trial), format="png")
 
 
-                        # train pseudolikehood
-                        rbm_train_mask = RBM(n_visible, n_hidden, k, lr*10, batchsize, seed=seed, sparsity = p, W_init=torch.clone(W_init), masked=True, rand=1)
-                        training_loss_mask, valid_loss_mask, dist_weights_mask, ratio_mask, err_train_mask, err_valid_mask, energy_train_mask, energy_valid_mask = rbm_train_mask.train(samples_train, samples_valid, W_true, max_epoch, show)
+                            fig = plt.figure()
+                            cnt = 0
+                            for i in range(n_hidden):
+                                cnt += 1
+                                ax = fig.add_subplot(int(np.sqrt(n_hidden)),
+                                                     int(np.sqrt(n_hidden)), cnt)
+                                ax.set_xticks([])
+                                ax.set_yticks([])
+                                im = plt.imshow(W_init.detach().numpy()[i, :].reshape((5, 5)),
+                                                vmin = -1, #max(abs(W_init.detach().numpy()[i, :])
+                                                vmax = 1, cmap='coolwarm')
 
-                        ax4.plot(np.arange(len(training_loss_mask)), training_loss_mask, label = 'Train')
-                        ax4.plot(np.arange(len(valid_loss_mask)), valid_loss_mask, label = 'Validation')
-                        ax4.set_xlabel('Epoch')
-                        ax4.set_ylabel('Loss')
-                        ax4.set_title('Masked loss')
-                        ax4.legend()
+                            fig.subplots_adjust(right=0.8)
+                            cbar_ax = fig.add_axes([0.85, 0.15, 0.05, 0.7])
+                            fig.colorbar(im, cax=cbar_ax)
+                            plt.savefig("./plot/init_pattern{}_h{}_v{}_lr{}_batch{}_p{}_epoch{}_noise{}_trial{}.png".format(pattern,n_hidden,n_visible,lr,batchsize,p,max_epoch,noise,trial), format="png")
 
-                        ax7.plot(show*np.arange(len(energy_train_mask)), energy_train_mask, label = 'Train')
-                        ax7.plot(show*np.arange(len(energy_valid_mask)), energy_valid_mask, label = 'Validation')
-                        ax7.set_xlabel('Epoch')
-                        ax7.set_ylabel('Free energy')
-                        ax7.set_title('Masked energy')
-                        ax7.legend()
+                     
+      
 
-                        # ax5.plot(np.arange(len(training_loss_mask)), dist_weights_mask)
-                        # ax5.set_xlabel('Iterations')
-                        # ax5.set_ylabel('Distance between weights')
-                        # ax5.set_title('Masked weight diff')
-                        ax5.plot(show*np.arange(len(err_train_mask)), err_train_mask, label='Train')
-                        ax5.plot(show*np.arange(len(err_valid_mask)), err_valid_mask,label='Validation')
-                        ax5.set_xlabel('Epoch')
-                        ax5.set_ylabel('Reconstruction Error')
-                        ax5.set_title('Masked Reconstruction')
-                        ax5.legend()
+                        if not os.path.isfile('./dump/RBM_method{}_pattern{}_h{}_v{}_lr{}_batch{}_p{}_epoch{}_noise{}_trial{}.pickle'.format(method,pattern,n_hidden,n_visible,lr,batchsize,p,max_epoch,noise,trial)):
+                            rbm_train = RBM(n_visible, n_hidden, k, W_init=torch.clone(W_init), 
+                                                 sparsity = p, lr=lr, method = method, 
+                                                 minibatch_size=batchsize, seed= seed,
+                                                 max_epoch = max_epoch)
+                            training_loss, valid_loss, dist_weights, ratio, err_train, err_valid, energy_train, energy_valid = rbm_train.train(samples_train, samples_valid, W_true, show)
+                            
+                            with open('./dump/RBM_method{}_pattern{}_h{}_v{}_lr{}_batch{}_p{}_epoch{}_noise{}_trial{}.pickle'.format(method,pattern,n_hidden,n_visible,lr,batchsize,p,max_epoch,noise,trial), 'wb') as handle:
+                                pickle.dump(rbm_train, handle)   
+                        else:
+                            with open('./dump/RBM_method{}_pattern{}_h{}_v{}_lr{}_batch{}_p{}_epoch{}_noise{}_trial{}.pickle'.format(method,pattern,n_hidden,n_visible,lr,batchsize,p,max_epoch,noise,trial), 'rb') as handle:
+                                rbm_train = pickle.load(handle)  
 
-                        ax6.plot(np.arange(len(training_loss_base)), ratio_mask)
-                        ax6.set_xlabel('Iterations')
-                        ax6.set_ylabel('Ratio of weight difference')
-                        ax6.set_ylim(bottom=0)
-                        ax6.set_title('Masked weight diff')
+                            training_loss =  rbm_train.training_loss
+                            valid_loss =  rbm_train.valid_loss
+                            dist_weights =  rbm_train.dist_W
+                            ratio =  rbm_train.ratio
+                            energy_train =  rbm_train.energy_train    
+                            energy_valid =  rbm_train.energy_valid
+                        
+                        train_loss.append(training_loss)
+                        val_loss.append(valid_loss) 
+                        wdiff.append(dist_weights) 
+                        wratio.append(ratio)
+                        train_energy.append(energy_train)
+                        val_energy.append(energy_valid)
+
+                        if plotw:
+                            # plot W
+                            fig = plt.figure()
+                            cnt = 0
+                            for i in range(n_hidden):
+                                cnt += 1
+                                ax = fig.add_subplot(int(np.sqrt(n_hidden)),
+                                                     int(np.sqrt(n_hidden)), cnt)
+                                ax.set_xticks([])
+                                ax.set_yticks([])
+                                im = plt.imshow(rbm_train.W.detach().numpy()[i, :].reshape([5, 5]),
+                                                vmin = -1, 
+                                                vmax = 1, 
+                                                cmap='coolwarm')
 
                         
-                        # train random mask
-                        rbm_train_rand = RBM(n_visible, n_hidden, k, lr*10, batchsize, seed=seed, sparsity = p, W_init=torch.clone(W_init), masked=True, rand=0.2)
-                        training_loss_rand, valid_loss_rand, dist_weights_rand, ratio_rand, err_train_rand, err_valid_rand, energy_train_rand, energy_valid_rand = rbm_train_rand.train(samples_train, samples_valid, W_true, max_epoch, show)
+                            fig.subplots_adjust(right=0.8)
+                            cbar_ax = fig.add_axes([0.85, 0.15, 0.05, 0.7])
+                            fig.colorbar(im, cax=cbar_ax)
+                            plt.savefig("./plot/W_method{}_pattern{}_h{}_v{}_lr{}_batch{}_p{}_epoch{}_noise{}_trial{}.png".format(method,pattern,n_hidden,n_visible,lr,batchsize,p,max_epoch,noise,trial), format="png")
 
-                        ax9.plot(np.arange(len(training_loss_rand)), training_loss_rand, label = 'Train')
-                        ax9.plot(np.arange(len(valid_loss_rand)), valid_loss_rand, label = 'Validation')
-                        ax9.set_xlabel('Epoch')
-                        ax9.set_ylabel('Loss')
-                        ax9.set_title('Random loss')
-                        ax9.legend()
+                    
+                    fig, (ax1, ax3, ax4, ax2) = plt.subplots(nrows=1, ncols=4, figsize=(12,3))
+                    
+                    trainloss = np.array(train_loss)
+                    trainloss_mean = np.mean(trainloss, axis=0)
+                    trainloss_std = np.std(trainloss, axis=0)
+                
+                    trainloss_ub = trainloss_mean + trainloss_std
+                    trainloss_lb = trainloss_mean - trainloss_std
 
-                        ax10.plot(show*np.arange(len(energy_train_rand)), energy_train_rand, label = 'Train')
-                        ax10.plot(show*np.arange(len(energy_valid_rand)), energy_valid_rand, label = 'Validation')
-                        ax10.set_xlabel('Epoch')
-                        ax10.set_ylabel('Free energy')
-                        ax10.set_title('Random energy')
-                        ax10.legend()
+                    valloss = np.array(val_loss)
+                    valloss_mean = np.mean(valloss, axis=0)
+                    valloss_std = np.std(valloss, axis=0)
+                
+                    valloss_ub = valloss_mean + valloss_std
+                    valloss_lb = valloss_mean - valloss_std
 
-                        # ax5.plot(np.arange(len(training_loss_mask)), dist_weights_mask)
-                        # ax5.set_xlabel('Iterations')
-                        # ax5.set_ylabel('Distance between weights')
-                        # ax5.set_title('Masked weight diff')
-
-                        ax11.plot(show*np.arange(len(err_train_rand)), err_train_rand, label='Train')
-                        ax11.plot(show*np.arange(len(err_valid_rand)), err_valid_rand,label='Validation')
-                        ax11.set_xlabel('Epoch')
-                        ax11.set_ylabel('Reconstruction Error')
-                        ax11.set_title('Random Reconstruction')
-                        ax11.legend()
-
-                        ax12.plot(np.arange(len(training_loss_rand)), ratio_rand)
-                        ax12.set_xlabel('Iterations')
-                        ax12.set_ylabel('Ratio of weight difference')
-                        ax12.set_ylim(bottom=0)
-                        ax12.set_title('Random weight diff')
-
-                        fig.tight_layout()
-                        plt.savefig("./plot/RBM_W{0}_h{1}_v{2}_lr{3}_batch{4}_p{5}_epoch{6}_noise{7}.png".format(method,n_hidden,n_visible,lr,batchsize,p,max_epoch,noise), format="png")
-
-                        # plot W
-                        fig = plt.figure()
-                        cnt = 0
-                        for i in range(n_hidden):
-                            cnt += 1
-                            ax = fig.add_subplot(int(np.sqrt(n_hidden)),
-                                                 int(np.sqrt(n_hidden)), cnt)
-                            ax.set_xticks([])
-                            ax.set_yticks([])
-                            im = plt.imshow(rbm_train_base.W.detach().numpy()[i, :].reshape([5, 5]),
-                                            vmin = -max(abs(rbm_train_base.W.detach().numpy()[i, :])), 
-                                            vmax = max(abs(rbm_train_base.W.detach().numpy()[i, :])), 
-                                            cmap='coolwarm')
-
-                        fig.subplots_adjust(right=0.8)
-                        cbar_ax = fig.add_axes([0.85, 0.15, 0.05, 0.7])
-                        fig.colorbar(im, cax=cbar_ax)
-                        plt.savefig("./plot/base_W{0}_h{1}_v{2}_lr{3}_batch{4}_p{5}_epoch{6}_noise{7}.png".format(method,n_hidden,n_visible,lr,batchsize,p,max_epoch,noise), format="png")
-
-                        # plot W
-                        fig = plt.figure()
-                        cnt = 0
-                        for i in range(n_hidden):
-                            cnt += 1
-                            ax = fig.add_subplot(int(np.sqrt(n_hidden)),
-                                                 int(np.sqrt(n_hidden)), cnt)
-                            ax.set_xticks([])
-                            ax.set_yticks([])
-                            im = plt.imshow(rbm_train_mask.W.detach().numpy()[i, :].reshape([5, 5]),
-                                            vmin = -max(abs(rbm_train_mask.W.detach().numpy()[i, :])), 
-                                            vmax = max(abs(rbm_train_mask.W.detach().numpy()[i, :])), cmap='coolwarm')
-
-                        fig.subplots_adjust(right=0.8)
-                        cbar_ax = fig.add_axes([0.85, 0.15, 0.05, 0.7])
-                        fig.colorbar(im, cax=cbar_ax)
-                        plt.savefig("./plot/mask_W{0}_h{1}_v{2}_lr{3}_batch{4}_p{5}_epoch{6}_noise{7}.png".format(method,n_hidden,n_visible,lr,batchsize,p,max_epoch,noise), format="png")
-
-                        fig = plt.figure()
-                        cnt = 0
-                        for i in range(n_hidden):
-                            cnt += 1
-                            ax = fig.add_subplot(int(np.sqrt(n_hidden)),
-                                                 int(np.sqrt(n_hidden)), cnt)
-                            ax.set_xticks([])
-                            ax.set_yticks([])
-                            im = plt.imshow(rbm_train_rand.W.detach().numpy()[i, :].reshape([5, 5]),
-                                            vmin = -max(abs(rbm_train_rand.W.detach().numpy()[i, :])), 
-                                            vmax = max(abs(rbm_train_rand.W.detach().numpy()[i, :])), cmap='coolwarm')
-
-                        fig.subplots_adjust(right=0.8)
-                        cbar_ax = fig.add_axes([0.85, 0.15, 0.05, 0.7])
-                        fig.colorbar(im, cax=cbar_ax)
-                        plt.savefig("./plot/rand_W{0}_h{1}_v{2}_lr{3}_batch{4}_p{5}_epoch{6}_noise{7}.png".format(method,n_hidden,n_visible,lr,batchsize,p,max_epoch,noise), format="png")
+                    ax1.plot(np.arange(len(trainloss_mean)), trainloss_mean, label = 'Train',alpha=.6)
+                    ax1.fill_between(np.arange(len(trainloss_ub)), trainloss_ub, trainloss_lb, alpha=.2, color = 'royalblue')
+                    ax1.plot(np.arange(len(valloss_mean)), valloss_mean, label = 'Validation',alpha=.6)
+                    ax1.fill_between(np.arange(len(valloss_ub)), valloss_ub, valloss_lb, alpha=.2, color='orange')
+                    ax1.set_xlabel('Epoch')
+                    ax1.set_ylabel('Loss')
+                    ax1.set_title('{} loss'.format(method))
+                    ax1.legend()
 
 
-                        fig = plt.figure()
-                        cnt = 0
-                        for i in range(n_hidden):
-                            cnt += 1
-                            ax = fig.add_subplot(int(np.sqrt(n_hidden)),
-                                                 int(np.sqrt(n_hidden)), cnt)
-                            ax.set_xticks([])
-                            ax.set_yticks([])
-                            im = plt.imshow(W_true.detach().numpy()[i, :].reshape([5, 5]),
-                                            vmin = -max(abs(W_true.detach().numpy()[i, :])), 
-                                            vmax = max(abs(W_true.detach().numpy()[i, :])), cmap='coolwarm')
+                    wdif = np.array(wdiff)
+                    wdif_mean = np.mean(wdif, axis=0)
+                    wdif_std = np.std(wdif, axis=0)
+                
+                    wdif_ub = wdif_mean + wdif_std
+                    wdif_lb = wdif_mean - wdif_std
 
-                        fig.subplots_adjust(right=0.8)
-                        cbar_ax = fig.add_axes([0.85, 0.15, 0.05, 0.7])
-                        fig.colorbar(im, cax=cbar_ax)
-                        plt.savefig("./plot/true_W{0}_h{1}_v{2}_lr{3}_batch{4}_p{5}_epoch{6}_noise{7}.png".format(method,n_hidden,n_visible,lr,batchsize,p,max_epoch,noise), format="png")
+                    ax2.plot(np.arange(len(wdif_mean)), wdif_mean)
+                    ax2.fill_between(np.arange(len(wdif_ub)), wdif_ub, wdif_lb, alpha=.2)
+                    ax2.set_xlabel('Epoch')
+                    ax2.set_ylabel('Weight difference')
+                    ax2.set_title('{} weight diff'.format(method))
+                    
+                    trainenergy = np.array(train_energy)
+                    trainenergy_mean = np.mean(trainenergy, axis=0)
+                    trainenergy_std = np.std(trainenergy, axis=0)
+                
+                    trainenergy_ub = trainenergy_mean + trainenergy_std
+                    trainenergy_lb = trainenergy_mean - trainenergy_std
 
+                    valenergy = np.array(val_energy)
+                    valenergy_mean = np.mean(valenergy, axis=0)
+                    valenergy_std = np.std(valenergy, axis=0)
+                
+                    valenergy_ub = valenergy_mean + valenergy_std
+                    valenergy_lb = valenergy_mean - valenergy_std
+
+                    ax3.plot(show*np.arange(len(trainenergy_mean)), trainenergy_mean, label = 'Train')
+                    ax3.fill_between(show*np.arange(len(trainenergy_ub)), trainenergy_ub, trainenergy_lb, alpha=.2, color = 'blue')
+                    ax3.plot(show*np.arange(len(valenergy_mean)), valenergy_mean, label = 'Validation')
+                    ax3.fill_between(show*np.arange(len(valenergy_ub)), valenergy_ub, valenergy_lb, alpha=.2, color = 'orange')
+                    ax3.set_xlabel('Epoch')
+                    ax3.set_ylabel('Free energy')
+                    ax3.set_title('{} energy'.format(method))
+                    ax3.legend()
+
+
+                    wrat = np.array(wratio)
+                    wrat_mean = np.mean(wrat, axis=0)
+                    wrat_std = np.std(wdif, axis=0)
+                
+                    wrat_ub = wrat_mean + wrat_std
+                    wrat_lb = wrat_mean - wrat_std
+
+                    ax4.plot(np.arange(len(training_loss)), wrat_mean)
+                    ax4.fill_between(np.arange(len(wrat_ub)), wrat_ub, wrat_lb, alpha=.2)
+                    ax4.set_xlabel('Epoch')
+                    ax4.set_ylabel('Ratio of weight difference')
+                    ax4.set_ylim(bottom=0)
+                    ax4.set_title('{} weight diff (relative)'.format(method))
+
+                    fig.tight_layout()
+                    plt.savefig("./plot/RBM_method{}_pattern{}_h{}_v{}_lr{}_batch{}_p{}_epoch{}_noise{}.png".format(method,pattern,n_hidden,n_visible,lr,batchsize,p,max_epoch,noise,trial), format="png")
                         
-
-                        fig = plt.figure()
-                        cnt = 0
-                        for i in range(n_hidden):
-                            cnt += 1
-                            ax = fig.add_subplot(int(np.sqrt(n_hidden)),
-                                                 int(np.sqrt(n_hidden)), cnt)
-                            ax.set_xticks([])
-                            ax.set_yticks([])
-                            im = plt.imshow(W_init.detach().numpy()[i, :].reshape([5, 5]),
-                                            vmin = -max(abs(W_init.detach().numpy()[i, :])), 
-                                            vmax = max(abs(W_init.detach().numpy()[i, :])), cmap='coolwarm')
-
-                        fig.subplots_adjust(right=0.8)
-                        cbar_ax = fig.add_axes([0.85, 0.15, 0.05, 0.7])
-                        fig.colorbar(im, cax=cbar_ax)
-                        plt.savefig("./plot/init_W{0}_h{1}_v{2}_lr{3}_batch{4}_p{5}_epoch{6}_noise{7}.png".format(method,n_hidden,n_visible,lr,batchsize,p,max_epoch,noise), format="png")
-
-
-
-
+                        
+                    
+       
 

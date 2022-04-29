@@ -35,7 +35,10 @@ def shuffle_corpus(data):
 
 
 
-def generate_W(method, n_hidden, n_visible, p =0.1):
+def generate_W(method, n_hidden, n_visible, p =0.1, seed = 521):
+    if seed is not None: 
+        torch.manual_seed(seed)
+
     if method == 'random':
     	W = torch.tensor(np.random.normal(0, np.sqrt(
             6.0 / (n_hidden + n_visible)), (n_hidden, n_visible)), dtype=torch.float32)
@@ -46,9 +49,15 @@ def generate_W(method, n_hidden, n_visible, p =0.1):
             W = model.W
 
     if method == 'sparse': 
-        mulnoise = torch.tensor(np.random.normal(0, np.sqrt(
-            6.0 / (n_hidden + n_visible)), (n_hidden, n_visible)), dtype=torch.float32)
-        W = torch.tensor(mulnoise * np.random.binomial(1, p, (n_hidden, n_visible)), dtype=torch.float32)        
+        #mulnoise = torch.tensor(np.random.normal(0, np.sqrt(
+        #    6.0 / (n_hidden + n_visible)), (n_hidden, n_visible)), dtype=torch.float32)
+        
+        ind = np.zeros(shape=(n_hidden,n_visible))
+        for i in range(n_hidden):
+            nonzero = sample(range(n_visible),math.ceil(n_visible*p))
+            for j in nonzero:
+                ind[i,j] = 2*np.random.binomial(1,0.5)-1
+        W = torch.tensor(ind, dtype=torch.float32)        
 
     return W
 

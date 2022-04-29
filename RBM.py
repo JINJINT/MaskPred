@@ -1,14 +1,15 @@
 
 from utils import *
+from RBMucd import *
 
 class RBM:
     """
     The RBM class
     """
     def __init__(self, n_visible, n_hidden, k, lr=0.01, minibatch_size=1, 
-                 seed= 10417617, W_init=None, masked = False, 
+                 seed= 10417617, W_init=None, method = 'cd',
                  sparsity=None, lbd=0.1, 
-                 rand = 1):
+                 rand = 0.2, max_epoch = 1000):
         """
         n_visible, n_hidden: dimension of visible and hidden layer
         k: number of gibbs sampling steps
@@ -26,11 +27,12 @@ class RBM:
         self.lr = lr
         self.minibatch_size = minibatch_size
         self.seed = seed
-        self.masked = masked
         self.sparsity = sparsity
         self.lbd = lbd
-        self.rand = rand
-        
+        self.rand = rand # in (0,1)
+        self.method = method
+        self.max_epoch = max_epoch
+                
         self.vbias = torch.zeros(n_visible, requires_grad=True)
         self.hbias = torch.zeros(n_hidden, requires_grad=True)
         if W_init is not None:
@@ -41,6 +43,13 @@ class RBM:
                 torch.manual_seed(self.seed)
             self.W = torch.empty((n_hidden, n_visible), requires_grad=True)
             torch.nn.init.normal_(self.W, 0, np.sqrt(6.0 / (self.n_hidden + self.n_visible)))
+
+        if self.method=='UCD':
+            self.ucd = RBMucd(n_visible, n_hidden, 
+                              w0 = nd.array(self.W.detach().numpy().T),
+                              b0 = nd.zeros(n_visible),
+                              c0 = nd.zeros(n_hidden))
+
         
 
     def h_v(self, v):
@@ -145,10 +154,10 @@ class RBM:
         loss = 0
         N = X.shape[0]
         n_visible = X.shape[1]
-
-    
-        if not self.masked:
+        
+        if self.method=='CD': # CD-k algorithm
             penalty = 0
+
             if toupdate:
                 sample_X = torch.stack(self.gibbs_k(X, k=1))[-1,]
                 expect_pv = self.h_v(sample_X)
@@ -161,23 +170,121 @@ class RBM:
                 
                 grad_W = (expect_pv.T @ expect_v - pv.T @ X)/N 
 
-                if self.sparsity is not None:
-                    grad_W =  grad_W  #+ self.lbd*(self.W)
-
                 # if self.sparsity is not None:
                 #     grad_W =  grad_W  + self.lbd*(torch.mean(pv - self.sparsity, dim=0).reshape((1,-1)).T @ torch.sum(X, dim=0).reshape((1,n_visible)))/N
                 #     penalty = penalty - torch.sum(torch.squeeze(self.sparsity * torch.log(torch.mean(pv, dim=0)) + (1-self.sparsity) * torch.log(1-torch.mean(pv, dim=0))))
 
                 #self.hbias = self.hbias -self.lr *  torch.mean(torch.squeeze(grad_hbias), dim=0) - torch.mean(pv - self.sparsity, dim=0) 
                 #self.vbias =  self.vbias - self.lr * torch.mean(torch.squeeze(grad_vbias), dim=0)
-                self.W =  self.W - self.lr /np.sqrt(ep) * grad_W
+                self.W =  self.W - self.lr /np.power(ep,1/2) * grad_W
                 if self.sparsity is not None:
                     thred = torch.quantile(torch.abs(torch.flatten(self.W)), q=1-2*self.sparsity)
                     self.W = self.W * (torch.nn.functional.relu(torch.abs(self.W) - thred)>0)
 
-            loss = torch.mean(torch.sum(torch.log(torch.exp(self.hbias + X @ self.W.T)+1), dim=1)+ X @ self.vbias.T)  + torch.sum(torch.abs(self.W))
+            loss = torch.mean(torch.sum(torch.log(torch.exp(self.hbias + X @ self.W.T)+1), dim=1)+ X @ self.vbias.T)  
+            if self.sparsity is not None:
+                loss = loss + torch.sum(torch.abs(self.W))
 
-        else: 
+        if self.method=='UCD': # unbiased CD-k algorithm
+            if ep < self.max_epoch*0.7:
+                if toupdate:
+                    sample_X = torch.stack(self.gibbs_k(X, k=1))[-1,]
+                    expect_pv = self.h_v(sample_X)
+                    pv = self.h_v(X) # (N, n_hidden)
+
+                    expect_v = sample_X.clone()
+
+                    grad_hbias = expect_pv - pv
+                    grad_vbias = expect_v - X
+                    
+                    grad_W = (expect_pv.T @ expect_v - pv.T @ X)/N 
+
+                    # if self.sparsity is not None:
+                    #     grad_W =  grad_W  + self.lbd*(torch.mean(pv - self.sparsity, dim=0).reshape((1,-1)).T @ torch.sum(X, dim=0).reshape((1,n_visible)))/N
+                    #     penalty = penalty - torch.sum(torch.squeeze(self.sparsity * torch.log(torch.mean(pv, dim=0)) + (1-self.sparsity) * torch.log(1-torch.mean(pv, dim=0))))
+
+                    #self.hbias = self.hbias -self.lr *  torch.mean(torch.squeeze(grad_hbias), dim=0) - torch.mean(pv - self.sparsity, dim=0) 
+                    #self.vbias =  self.vbias - self.lr * torch.mean(torch.squeeze(grad_vbias), dim=0)
+                    self.W =  self.W - self.lr /np.power(ep,1/2) * grad_W
+                    if self.sparsity is not None:
+                        thred = torch.quantile(torch.abs(torch.flatten(self.W)), q=1-2*self.sparsity)
+                        self.W = self.W * (torch.nn.functional.relu(torch.abs(self.W) - thred)>0)
+
+                    self.ucd = RBMucd(self.n_visible, self.n_hidden, 
+                              w0 = nd.array(self.W.detach().numpy().T),
+                              b0 = nd.zeros(self.n_visible),
+                              c0 = nd.zeros(self.n_hidden))    
+
+            else:
+                if toupdate:
+                    dat = nd.array(X)
+                    self.ucd.compute_grad1(dat)
+                    self.ucd.zero_grad2()
+                    for j in range(100):
+                        tau_t, disc_t = self.ucd.accumulate_grad2_ucd(dat, min_mcmc=1, max_mcmc=100)
+                    self.ucd.update_param(self.lr, nchain=100)
+                    self.W =  torch.tensor(self.ucd.w.asnumpy().T.copy())
+                    if self.sparsity is not None:
+                        thred = torch.quantile(torch.abs(torch.flatten(self.W)), q=1-2*self.sparsity)
+                        self.W = self.W * (torch.nn.functional.relu(torch.abs(self.W) - thred)>0)
+
+            loss = torch.mean(torch.sum(torch.log(torch.exp(self.hbias + X @ self.W.T)+1), dim=1)+ X @ self.vbias.T) 
+            if self.sparsity is not None:
+                loss = loss + torch.sum(torch.abs(self.W))
+
+
+        if self.method=='pseudo': # pseudolikelihood loss
+            for i in range(n_visible):
+                X_temp1 = torch.clone(X)
+                X_temp1[:,i] = 1
+                X_temp0 = torch.clone(X)
+                X_temp0[:,i] = 0
+                log_p1 = torch.sum(torch.log(torch.exp(self.hbias + X_temp1 @ self.W.T)+1), axis=1) + self.vbias[i]
+                log_p0 = torch.sum(torch.log(torch.exp(self.hbias + X_temp0 @ self.W.T)+1), axis=1)
+                loss += torch.mean(X[:,i]*log_p1 + (1-X[:,i])*log_p0 - torch.log(torch.exp(log_p1) + torch .exp(log_p0)))
+            loss = -loss / n_visible
+            if self.sparsity is not None:
+                loss = loss +  0.001*torch.sum(torch.abs(self.W))
+            
+            if toupdate:
+                loss.backward()
+                
+                with torch.no_grad():
+                    #self.hbias -= self.lr *  self.hbias.grad
+                    #self.vbias -= self.lr * self.vbias.grad
+                    self.W -= self.lr /np.power(ep,1/2) * self.W.grad
+  
+                self.W.grad.zero_()
+                self.vbias.grad.zero_()
+                self.hbias.grad.zero_()
+
+
+        if self.method=='randmask': # random masking loss
+            rand_indices = sample(range(n_visible), math.ceil(n_visible * self.rand))
+            for i in rand_indices:
+                X_temp1 = torch.clone(X)
+                X_temp1[:,i] = 1
+                X_temp0 = torch.clone(X)
+                X_temp0[:,i] = 0
+                log_p1 = torch.sum(torch.log(torch.exp(self.hbias + X_temp1 @ self.W.T)+1), axis=1) + self.vbias[i]
+                log_p0 = torch.sum(torch.log(torch.exp(self.hbias + X_temp0 @ self.W.T)+1), axis=1)
+                loss += torch.mean(X[:,i]*log_p1 + (1-X[:,i])*log_p0 - torch.log(torch.exp(log_p1) + torch .exp(log_p0)))
+            loss = -loss / n_visible
+            if self.sparsity is not None:
+                loss = loss +  0.001*torch.sum(torch.abs(self.W))
+            
+            if toupdate:
+                loss.backward()
+                
+                with torch.no_grad():
+                    #self.hbias -= self.lr *  self.hbias.grad
+                    #self.vbias -= self.lr * self.vbias.grad
+                    self.W -= self.lr /np.power(ep,1/2)* self.W.grad
+  
+                self.W.grad.zero_()
+                self.vbias.grad.zero_()
+                self.hbias.grad.zero_()
+
             # masked loss    
             
             # Brute force
@@ -196,36 +303,11 @@ class RBM:
             loss.backward()
             '''
             # Matrix
-            rand_indices = sample(range(n_visible), math.ceil(n_visible * self.rand))
-            for i in rand_indices:
-                X_temp1 = torch.clone(X)
-                X_temp1[:,i] = 1
-                X_temp0 = torch.clone(X)
-                X_temp0[:,i] = 0
-                log_p1 = torch.sum(torch.log(torch.exp(self.hbias + X_temp1 @ self.W.T)+1), axis=1) + self.vbias[i]
-                log_p0 = torch.sum(torch.log(torch.exp(self.hbias + X_temp0 @ self.W.T)+1), axis=1)
-                loss += torch.mean(X[:,i]*log_p1 + (1-X[:,i])*log_p0 - torch.log(torch.exp(log_p1) + torch .exp(log_p0)))
-            loss = -loss / n_visible
-            loss = loss +  0.001*torch.sum(torch.abs(self.W))
-            
-            if toupdate:
-                loss.backward()
-                
-                with torch.no_grad():
-                    #self.hbias -= self.lr *  self.hbias.grad
-                    #self.vbias -= self.lr * self.vbias.grad
-                    self.W -= self.lr /np.sqrt(ep) * self.W.grad
-  
-                self.W.grad.zero_()
-                
-                
-                self.vbias.grad.zero_()
-                self.hbias.grad.zero_()
 
         return loss.detach()*N
 
 
-    def train(self, X_train, X_valid, W_true, max_epoch=200, show = 10):
+    def train(self, X_train, X_valid, W_true, show = 10):
 
         n_train, n_visible = X_train.shape
         n_valid, n_visible = X_valid.shape
@@ -238,19 +320,18 @@ class RBM:
         energy_train = []
         energy_valid = []
 
-        for epoch in np.arange(max_epoch):
+        for epoch in np.arange(self.max_epoch):
             train_loss = 0
             shuffle_indices = np.arange(0, n_train)
             np.random.shuffle(shuffle_indices)
+
+            dist_W.append(torch.norm(self.W.detach()-W_true.detach())/(self.n_hidden*self.n_visible))
+            ratio.append(dist_W[-1]/dist_W[0])
             for i in range(n_train//self.minibatch_size):
                 X_batch = X_train[shuffle_indices[i*self.minibatch_size:(i+1)*self.minibatch_size-1]]
                 train_loss_batch = self.update(X_batch, ep = epoch+1)
                 train_loss += train_loss_batch
-            
             training_loss.append(train_loss/n_train)
-            dist_W.append(torch.norm(self.W.detach()-W_true.detach())/(self.n_hidden*self.n_visible))
-            ratio.append(dist_W[-1]/dist_W[0])
-            
             valid_loss.append(self.update(X_valid, toupdate = False)/n_valid)
             if not epoch % show:
                 print('Epoch {0}'.format(epoch))
@@ -268,6 +349,14 @@ class RBM:
                 print('energy: Train {0}, Valid {1}'.format(
                     energy_train[-1], energy_valid[-1]))              
         
+        self.training_loss = training_loss
+        self.valid_loss = valid_loss
+        self.dist_W = dist_W
+        self.ratio = ratio
+        self.err_train = err_train
+        self.err_valid = err_valid
+        self.energy_train = energy_train
+        self.energy_valid = energy_valid
         return training_loss, valid_loss, dist_W, ratio, err_train, err_valid, energy_train, energy_valid
 
     def samp(self, n, check = False):
@@ -281,122 +370,4 @@ class RBM:
 
 
 
-# if __name__ == "__main__":
-#     np.seterr(all='raise')
-#     parser = argparse.ArgumentParser(description='data, parameters, etc.')
-#     parser.add_argument('-max_epoch', type=int, help="maximum epoch", default=300)
-#     parser.add_argument('-k', type=int, help="CD-k sampling", default=1)
-#     parser.add_argument('-lr', type=float, help="learning rate", default=0.02)
-#     parser.add_argument('-minibatch_size', type=int, help="minibatch_size", default=1)
-#     parser.add_argument('-train', type=str, help='training file path', default='../data/digitstrain.txt')
-#     parser.add_argument('-valid', type=str, help='validation file path', default='../data/digitsvalid.txt')
-#     parser.add_argument('-test', type=str, help="test file path", default="../data/digitstest.txt")
-#     parser.add_argument('-n_hidden', type=int, help="num of hidden units", default=100)
-
-#     args = parser.parse_args()
-
-#     train_data = np.genfromtxt(args.train, delimiter=",")
-#     train_X = train_data[:, :-1]
-#     train_Y = train_data[:, -1]
-#     train_X = binary_data(train_X)
-#     valid_data = np.genfromtxt(args.valid, delimiter=",")
-#     valid_X = valid_data[:, :-1]
-#     valid_X = binary_data(valid_X)
-#     valid_Y = valid_data[:, -1]
-    
-#     test_data = np.genfromtxt(args.test, delimiter=",")
-#     test_X = test_data[:, :-1]
-#     test_X = binary_data(test_X)
-#     test_Y = test_data[:, -1]
-
-#     """
-#     Implement as you wish, not autograded
-#     """
-
-#     n_train, n_visible = train_X.shape
-
-#     err_train = []
-#     err_valid = []
-
-#     model = RBM(n_visible, n_hidden=args.n_hidden, k=args.k, lr=args.lr,
-#          minibatch_size=args.minibatch_size, seed = None)
-    
-#     for epoch in np.arange(0, args.max_epoch):
-        
-#         shuffle_indices = np.arange(0, n_train)
-#         np.random.shuffle(shuffle_indices)
-        
-#         for idx in shuffle_indices:
-#             model.update(train_X[idx, :].reshape((1,-1)))
-
-#         err_train.append(model.eval(train_X))
-#         err_valid.append(model.eval(valid_X))
-
-#         if not epoch % 10:
-#             print('Epoch {0}'.format(epoch))
-#             print('err: Train {0}, Valid {1}'.format(
-#                 err_train[-1], err_valid[-1]))        
-    
-    
-
-#     # Plot result
-#     plt.figure()
-#     plt.plot(range(args.max_epoch), err_train, label='Train')
-#     plt.plot(range(args.max_epoch), err_valid,label='Validation')
-#     plt.xlabel('Epoch')
-#     plt.ylabel('Reconstruction Error')
-#     plt.legend()
-#     plt.savefig(
-#         "../plot/RBM1_k{0}_err.png".format(model.k), format="png")
-
-    # # Plot W
-    # fig = plt.figure()
-    # cnt = 0
-    # for i in range(args.n_hidden):
-    #     cnt += 1
-    #     ax = fig.add_subplot(int(np.sqrt(args.n_hidden)),
-    #                          int(np.sqrt(args.n_hidden)), cnt)
-    #     ax.set_xticks([])
-    #     ax.set_yticks([])
-    #     im = plt.imshow(model.W[i, :].reshape([28, 28]))
-
-    # fig.subplots_adjust(right=0.8)
-    # cbar_ax = fig.add_axes([0.85, 0.15, 0.05, 0.7])
-    # fig.colorbar(im, cax=cbar_ax)
-    # plt.savefig("../plot/RBM1_k{0}_W.png".format(model.k), format="png")
-
-
-    # Plot test original
-    # np.random.seed(seed)
-    # idxtest = np.random.randint(0, test_data.shape[0], size=100)
-    # fig = plt.figure()
-    # cnt = 0
-    # for i in idxtest:
-    #     cnt += 1
-    #     ax = fig.add_subplot(int(np.sqrt(100)),
-    #                          int(np.sqrt(100)), cnt)
-    #     ax.set_xticks([])
-    #     ax.set_yticks([])
-    #     im = plt.imshow(test_X[i, :].reshape([28, 28]), cmap='gray')
-
-    # plt.savefig(
-    #     "../plot/RBM1_k{0}_original_test.png".format(model.k), format="png")
-    
-    
-    # # Plot test reconstruct
-    # _, _, _, sample_X, _, _ = model.gibbs_k(test_X[idxtest, :])
-    # fig = plt.figure()
-    # cnt = 0
-    # for i in range(100):
-    #     cnt += 1
-    #     ax = fig.add_subplot(int(np.sqrt(100)),
-    #                          int(np.sqrt(100)), cnt)
-    #     ax.set_xticks([])
-    #     ax.set_yticks([])
-    #     im = plt.imshow(sample_X[i,:].reshape([28, 28]), cmap='gray')
-
-    # plt.savefig("../plot/RBM1_k{0}_recons_test.png".format(model.k), format="png")
-
-
-    
 

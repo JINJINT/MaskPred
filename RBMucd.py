@@ -194,19 +194,19 @@ class RBMucd:
             self.c = c0.as_in_context(self.ctx)
         else:
             self.w = nd.random.normal(scale=0.1, shape=(m, n), ctx=self.ctx)
-            #self.b = nd.zeros(shape=m, ctx=self.ctx)
-            #self.c = nd.zeros(shape=n, ctx=self.ctx)
-            self.b = nd.random.normal(scale=0.1, shape=m, ctx=self.ctx)
-            self.c = nd.random.normal(scale=0.1, shape=n, ctx=self.ctx)
+            self.b = nd.zeros(shape=m, ctx=self.ctx)
+            self.c = nd.zeros(shape=n, ctx=self.ctx)
+            #self.b = nd.random.normal(scale=0.1, shape=m, ctx=self.ctx)
+            #self.c = nd.random.normal(scale=0.1, shape=n, ctx=self.ctx)
 
         # Gradients
         self.dw1 = nd.empty(shape=self.w.shape, ctx=self.ctx)
-        self.db1 = nd.empty(shape=self.b.shape, ctx=self.ctx)
-        self.dc1 = nd.empty(shape=self.c.shape, ctx=self.ctx)
+        #self.db1 = nd.empty(shape=self.b.shape, ctx=self.ctx)
+        #self.dc1 = nd.empty(shape=self.c.shape, ctx=self.ctx)
 
         self.dw2 = nd.empty(shape=self.w.shape, ctx=self.ctx)
-        self.db2 = nd.empty(shape=self.b.shape, ctx=self.ctx)
-        self.dc2 = nd.empty(shape=self.c.shape, ctx=self.ctx)
+        #self.db2 = nd.empty(shape=self.b.shape, ctx=self.ctx)
+        #self.dc2 = nd.empty(shape=self.c.shape, ctx=self.ctx)
 
     # Approximate log-likelihood value
     def loglik(self, dat, nobs=100, nmc=30, nstep=10):
@@ -248,15 +248,15 @@ class RBMucd:
         # Mean of hidden units given vmb
         hmean = nd.sigmoid(nd.dot(vmb, self.w) + self.c)
 
-        self.db1 = nd.mean(vmb, axis=0, out=self.db1)
-        self.dc1 = nd.mean(hmean, axis=0, out=self.dc1)
+        #self.db1 = nd.mean(vmb, axis=0, out=self.db1)
+        #self.dc1 = nd.mean(hmean, axis=0, out=self.dc1)
         self.dw1 = nd.dot(vmb.T, hmean, out=self.dw1)
         self.dw1 /= vmb.shape[0]
 
     # Zero out gradients
     def zero_grad2(self):
-        self.db2 = nd.zeros_like(self.db2, out=self.db2)
-        self.dc2 = nd.zeros_like(self.dc2, out=self.dc2)
+        #self.db2 = nd.zeros_like(self.db2, out=self.db2)
+        #self.dc2 = nd.zeros_like(self.dc2, out=self.dc2)
         self.dw2 = nd.zeros_like(self.dw2, out=self.dw2)
 
     # Compute the second term of gradient using CD-k
@@ -273,8 +273,8 @@ class RBMucd:
 
         # Second term
         hmean = nd.sigmoid(nd.dot(v, self.w) + self.c)
-        self.db2 = nd.sum(v, axis=0, out=self.db2)
-        self.dc2 = nd.sum(hmean, axis=0, out=self.dc2)
+        #self.db2 = nd.sum(v, axis=0, out=self.db2)
+        #self.dc2 = nd.sum(hmean, axis=0, out=self.dc2)
         self.dw2 = nd.dot(v.T, hmean, out=self.dw2)
 
     # Compute the second term of gradient using unbiased CD
@@ -300,10 +300,10 @@ class RBMucd:
         hchist_mean = nd.sigmoid(nd.dot(vchist[-remain:, :], self.w) + self.c)
 
         # Second term
-        self.db2 += vk + nd.sum(vhist[-remain:, :], axis=0) -\
-                    nd.sum(vchist[-remain:, :], axis=0)
-        self.dc2 += hk_mean + nd.sum(hhist_mean, axis=0) -\
-                    nd.sum(hchist_mean, axis=0)
+        #self.db2 += vk + nd.sum(vhist[-remain:, :], axis=0) -\
+        #            nd.sum(vchist[-remain:, :], axis=0)
+        #self.dc2 += hk_mean + nd.sum(hhist_mean, axis=0) -\
+        #            nd.sum(hchist_mean, axis=0)
         self.dw2 += nd.dot(vk.reshape(-1, 1), hk_mean.reshape(1, -1)) +\
                     nd.dot(vhist[-remain:, :].T, hhist_mean) -\
                     nd.dot(vchist[-remain:, :].T, hchist_mean)
@@ -312,8 +312,8 @@ class RBMucd:
 
     # Update parameters
     def update_param(self, lr, nchain):
-        self.b += lr * (self.db1 - self.db2 / nchain)
-        self.c += lr * (self.dc1 - self.dc2 / nchain)
+        #self.b += lr * (self.db1 - self.db2 / nchain)
+        #self.c += lr * (self.dc1 - self.dc2 / nchain)
         self.w += lr * (self.dw1 - self.dw2 / nchain)
 
     # Train RBM using CD-k
@@ -322,7 +322,7 @@ class RBMucd:
         ind = np.arange(N)
         loglik = []
         distW = []
-        distB = []
+        #distB = []
 
         for epoch in range(epochs):
             np.random.shuffle(ind)
@@ -345,11 +345,11 @@ class RBMucd:
                     loglik.append(ll)
                     distw = nd.norm(self.w-W_true).asscalar()/(self.n*self.m)
                     distW.append(distw)
-                    distb = nd.norm(self.b).asscalar()/self.m + nd.norm(self.c).asscalar()/self.n
-                    distB.append(distb)
+                    #distb = nd.norm(self.b).asscalar()/self.m + nd.norm(self.c).asscalar()/self.n
+                    #distB.append(distb)
                     print("epoch = {}, batch = {}, loglik = {}, distW = {}".format(epoch, ib, ll, distw))
 
-        return loglik, distW, distB
+        return loglik, distW#, distB
 
     # Train RBM using Unbiased CD
     def train_ucd(self, dat, batch_size, epochs, W_true, lr=0.01, min_mcmc=1, max_mcmc=100, nchain=1, report_freq=1, exact_loglik=False):
@@ -359,7 +359,7 @@ class RBMucd:
         tau = []
         disc = []
         distW = []
-        distB = []
+        #distB = []
 
         for epoch in range(epochs):
             np.random.shuffle(ind)
@@ -390,12 +390,12 @@ class RBMucd:
                     disc.append(dd / nchain / report_freq)
                     distw = nd.norm(self.w - W_true).asscalar()/(self.n*self.m)
                     distW.append(distw)
-                    distb = nd.norm(self.b).asscalar()/self.m + nd.norm(self.c).asscalar()/self.n
-                    distB.append(distb)
+                    #distb = nd.norm(self.b).asscalar()/self.m + nd.norm(self.c).asscalar()/self.n
+                    #distB.append(distb)
                     tt = 0.0
                     dd = 0.0
                     print("epoch = {}, batch = {}, loglik = {}, distW = {}".format(epoch, ib, ll, distw))
 
-        return loglik, tau, disc, distW, distB
+        return loglik, tau, disc, distW#, distB
 
 
