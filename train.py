@@ -21,7 +21,7 @@ k = 10
 show = 10
 plotw = False
 
-for pattern in ['sparse']:
+for pattern in ['sparse','random']:
     for noise in [0.5]:      
         for p in [0.1,None]:
             for batchsize in [100]:
